@@ -118,7 +118,7 @@ class Flatten(Layer):
         "'input: input data with shape (batch_size, num_channels, width, height)'"
         "'output: output data with shape (batch_size, num_channels*width*height)'"
         input = np.array(input) if not isinstance(input,np.ndarray) else input
-        self.input_shape = input.shape
+        self.input_shape = input.shape  
         return input.reshape(input.shape[0],-1)
     
     def backward(self,grad_output):
@@ -186,10 +186,10 @@ class Adam(Optimizer):
     def step(self, layers, grad_output):
         self.t += 1
         
-        for idx, layer in enumerate(reversed(layers)):
-            grad_output, grad_weights = layer.backward(grad_output)
-            
+        for idx, layer in enumerate(reversed(layers)):     
+            grad_output, grad_weights = layer.backward(grad_output)       
             if grad_weights is not None:
+                # print(idx)
                 if idx not in self.m:
                     self.m[idx] = np.zeros_like(grad_weights)
                     self.v[idx] = np.zeros_like(grad_weights)
@@ -201,6 +201,8 @@ class Adam(Optimizer):
                 v_hat = self.v[idx] / (1 - self.beta2 ** self.t)
 
                 layer.weights -= self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
+
+        return grad_output
 
     
 
@@ -267,7 +269,7 @@ if __name__ == '__main__':
     # Define loss function and optimizer
     loss_function = CrossEntropyLoss()
     optimizer = SGD(lr=0.001)
-    # optimizer = Adam(lr=0.001)
+    optimizer = Adam(lr=0.001)
 
     model = FNN(optimizer=optimizer, loss=loss_function)
     model.add(flatten)
