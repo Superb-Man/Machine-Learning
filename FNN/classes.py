@@ -98,8 +98,8 @@ class SoftMax(Activation):
         # f(x_i) = e^x_i / sum(exp(x_j))
 
         input = np.array(input) if not isinstance(input,np.ndarray) else input
-         # prevent overflow
-        # input -= np.max(input, axis=-1, keepdims=True)
+        # prevent overflow
+        input -= np.max(input, axis=-1, keepdims=True)
         self.output = np.exp(input) / np.sum(np.exp(input), axis=-1, keepdims=True)
 
         return self.output
@@ -109,7 +109,14 @@ class SoftMax(Activation):
         # if i == j
         # dL/dx_i = f(x_i) * (1 - f(x_i)) * dL/df(x_i)
         # if i != j
-        # dL/dx_i = -f(x_i) * f(x_j) * dL/df(x_j)
+        # dL/dx_i = -f(x_i) * sum(f(x_j) * dL/df(x_j))
+
+        # combining both 
+        # grad_i = dL/df(x_i)
+        # grad_j = dL/df(x_j)
+        # dL/dx_i = grad_i * f(x_i)*(1 - f(x_i)) - f(x_i) * sum(grad_j -f(x_j))
+        # dL/dx_i = f(x_i) * (grad_i *(1 - f(x_i)) - sum(grad_j * f(x_j)))
+        # dL/dx_i = f(x_i) * (grad_i - sum(grad_j * f(x_j))) 
 
         grad_input = self.output * (grad_output - np.sum(self.output * grad_output, axis=-1, keepdims=True))
 
@@ -346,7 +353,7 @@ class FNN:
         return input
     
     def backward(self,grad_output):
-        return optimizer.step(self.layers,grad_output)
+        return self.optimizer.step(self.layers,grad_output)
 
     def train(self,x,y_true,epochs):
         lrs = [0.001]
