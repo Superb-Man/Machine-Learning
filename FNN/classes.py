@@ -33,6 +33,10 @@ class Activation:
         raise NotImplementedError
         
 
+
+########################################################## CLASS DEFINITIONS ##########################################################
+
+
 class Dropout(Layer):
     def __init__(self, p=0.2):
         self.p = 1 - p
@@ -40,6 +44,10 @@ class Dropout(Layer):
     
     def forward(self, input):
         np.random.seed(0)
+        # generate a mask with the same shape as the input
+        # mask = 1 with probability p
+        # mask = 0 with probability 1 - p
+
         self.mask = np.random.binomial(1, self.p, size=input.shape) / self.p
         return input * self.mask
     
@@ -52,6 +60,8 @@ class ReLU(Activation):
         "'input: input data with shape (batch_size, num_channels, width, height)'"
         "'output: output data with shape (batch_size, num_channels, width, height)'"
         input = np.array(input) if not isinstance(input,np.ndarray) else input
+        
+        # f(x) = max(0,x)
         self.input = input
         return np.maximum(0,input)
     
@@ -59,6 +69,7 @@ class ReLU(Activation):
     def backward(self,grad_output):
         "'grad_output: gradient of loss with respect to the output of this layer (batch_size, num_channels, width, height)'"
         "'grad_input: gradient of loss with respect to the input of this layer (batch_size, num_channels, width, height)'"
+        # f'(x) = 1 if x > 0 else 0
         grad_input = grad_output.copy()
         grad_input[self.input <= 0] = 0
         return grad_input
@@ -68,6 +79,8 @@ class Sigmoid(Activation):
         "'input: input data with shape (batch_size, num_channels, width, height)'"
         "'output: output data with shape (batch_size, num_channels, width, height)'"
         input = np.array(input) if not isinstance(input,np.ndarray) else input
+
+        # f(x) = 1 / (1 + e^-x)
         self.output = 1 / (1 + np.exp(-input))
         return self.output
     
@@ -77,6 +90,35 @@ class Sigmoid(Activation):
         # back-propagate through the sigmoid function
         # f'(x) = grad_output * f(x) * (1 - f(x))
         return grad_output * self.output * (1 - self.output)
+    
+class SoftMax(Activation):
+    
+    def forward(self,input):
+        # Softmax formula
+        # f(x_i) = e^x_i / sum(exp(x_j))
+
+        input = np.array(input) if not isinstance(input,np.ndarray) else input
+         # prevent overflow
+        # input -= np.max(input, axis=-1, keepdims=True)
+        self.output = np.exp(input) / np.sum(np.exp(input), axis=-1, keepdims=True)
+
+        return self.output
+
+    def backward(self,grad_output):
+
+        # if i == j
+        # dL/dx_i = f(x_i) * (1 - f(x_i)) * dL/df(x_i)
+        # if i != j
+        # dL/dx_i = -f(x_i) * f(x_j) * dL/df(x_j)
+
+        grad_input = self.output * (grad_output - np.sum(self.output * grad_output, axis=-1, keepdims=True))
+
+        return grad_input
+        
+
+
+        
+
 
 
 
@@ -102,9 +144,8 @@ class Dense(Layer):
             denominator = np.sqrt(input_size)
         
         np.random.seed(0)
-        
         self.weights = np.random.randn(input_size,output_size) / denominator
-        self.bias = np.zeros(output_size)
+        self.bias = np.ones(output_size)
         self.activation = activation
 
     def forward(self,input):
@@ -153,6 +194,12 @@ class Flatten(Layer):
     
 
 class CrossEntropyLoss(Loss):
+    def one_hot(self,y_true,num_classes):
+        "'y_true: true labels with shape (batch_size,)'"
+        "'num_classes: number of classes'"
+        return np.eye(num_classes)[y_true] # returns one hot encoded labels
+    
+
     def forward(self,y_true,y_pred):
         "'y_true: true labels with shape (batch_size, num_classes)'"
         "'y_pred: predicted labels with shape (batch_size, num_classes)'"
@@ -161,12 +208,15 @@ class CrossEntropyLoss(Loss):
 
         epsilon = 1e-10
 
+        if y_true.ndim == 1:
+            y_true = self.one_hot(y_true,y_pred.shape[1])
+
         # clip values to avoid log(0)
         y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
 
         m = y_pred.shape[0] # number of samples
 
-        # calculate loss loglikelihood
+        # L = -sum(y_true * log(y_pred)) / m
         loss = -np.sum(y_true * np.log(y_pred)) / m
         return loss
 
@@ -179,9 +229,36 @@ class CrossEntropyLoss(Loss):
         y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
         m = y_pred.shape[0] # number of samples
 
-        # calculate gradient of loss with respect to the output of this layer
+        if y_true.ndim == 1:
+            y_true = self.one_hot(y_true,y_pred.shape[1])
+
+        # dL/dy_pred = -y_true / y_pred / m
         grad_output = -y_true / y_pred / m
         return grad_output
+    
+class MSE(Loss):
+    def forward(self,y_true,y_pred):
+        "'y_true: true labels with shape (batch_size, num_classes)'"
+        "'y_pred: predicted labels with shape (batch_size, num_classes)'"
+        y_true = np.array(y_true) if not isinstance(y_true,np.ndarray) else y_true
+        y_pred = np.array(y_pred) if not isinstance(y_pred,np.ndarray) else y_pred
+
+        # L(y_pred, y_true) = sum((y_true - y_pred)^2) / m
+        m = y_pred.shape[0]
+        loss = np.sum((y_true - y_pred) ** 2) / m
+        return loss
+
+    def backward(self,y_true,y_pred):
+        "'grad_output: gradient of loss with respect to the output of this layer (batch_size, num_classes)'"
+        "'grad_input: gradient of loss with respect to the input of this layer (batch_size, num_classes)'"
+
+        # dL/dy_pred = -2 * (y_true - y_pred) / m
+
+        m = y_pred.shape[0]
+        grad_output = -2 * (y_true - y_pred) / m
+        return grad_output
+    
+
         
     
 # Stochastic Gradient Descent formula
@@ -290,7 +367,7 @@ class FNN:
 
 if __name__ == '__main__':
     sample_size = 1000
-    num_classes = 2
+    num_classes = 4
     input_shape = (sample_size, 3, 32, 32)
     
     # generatae same random data each time
@@ -303,22 +380,22 @@ if __name__ == '__main__':
     y_true = np.eye(num_classes)[np.random.choice(num_classes, sample_size)]  # random one-hot labels
     print(y_true.shape)
 
-    x_train = x[:1000]
-    y_train = y_true[:1000]
 
-    x_test = x[1000:]
-    y_test = y_true[1000:]
+    # read x ttrain and y_train from npz file
+    # data = np.load('data.npz')
+    # x_train = data['x']
+    # y_train = data['y_true']
 
     
     # Define the model layers
     flatten = Flatten()
     dense1 = Dense(3*32*32, 100, activation=ReLU())
     dense2 = Dense(100, 100, activation=ReLU())
-    dense3 = Dense(100, num_classes, activation=Sigmoid())
+    dense3 = Dense(100, num_classes, activation=SoftMax())
 
     # Define loss function and optimizer
     loss_function = CrossEntropyLoss()
-    optimizer = SGD(lr=0.001)
+    # optimizer = SGD(lr=0.001)
     optimizer = Adam(lr=0.001)
 
     model = FNN(optimizer=optimizer, loss=loss_function)
@@ -329,9 +406,9 @@ if __name__ == '__main__':
     model.add(Dropout())
     model.add(dense3)
 
-    model.train(x_train, y_train, epochs=100)
-    y_pred = model.predict(x_train)
+    model.train(x, y_true, epochs=100)
+    y_pred = model.predict(x)
     print(y_pred)
 
-    accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_train, axis=1))
+    accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
     print(f"Accuracy: {accuracy}")
