@@ -114,8 +114,6 @@ class SoftMax(Activation):
         # combining both 
         # grad_i = dL/df(x_i)
         # grad_j = dL/df(x_j)
-        # dL/dx_i = grad_i * f(x_i)*(1 - f(x_i)) - f(x_i) * sum(grad_j -f(x_j))
-        # dL/dx_i = f(x_i) * (grad_i *(1 - f(x_i)) - sum(grad_j * f(x_j)))
         # dL/dx_i = f(x_i) * (grad_i - sum(grad_j * f(x_j))) 
 
         grad_input = self.output * (grad_output - np.sum(self.output * grad_output, axis=-1, keepdims=True))
@@ -366,9 +364,75 @@ class FNN:
                 x = self.loss.backward(y_true,x)
                 x = self.backward(x)
 
-    def predict(self,x):
 
-        return self.forward(x,training = False)
+class KFold:
+    def __init__(self, n_splits=5):
+        self.n_splits = n_splits
+    
+    def split(self, X):
+        X = np.array(X)
+        n_samples = len(X)
+        indices = np.arange(n_samples)
+
+        fold_sizes = np.full(self.n_splits, n_samples // self.n_splits, dtype=int)
+        fold_sizes[:n_samples % self.n_splits] += 1
+
+        current = 0
+        for fold_size in fold_sizes:
+            start, stop = current, current + fold_size
+            val_indices = indices[start:stop]
+            train_indices = np.concatenate([indices[:start], indices[stop:]])
+            yield train_indices, val_indices
+            current = stop
+
+
+def train(x, y_true, epochs, n_splits=5):
+    kfold = KFold(n_splits=n_splits)
+    
+    fold_losses = []
+    bestModel = None
+    prev_loss = np.inf
+
+    # Loop over each fold
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(x)):
+        print(f"\n--- Fold {fold+1} ---")
+        model = FNN(optimizer=Adam(lr=0.001), loss=CrossEntropyLoss())
+        model.add(Flatten())
+        model.add(Dense(3*32*32, 100, activation=ReLU()))
+        model.add(Dropout())
+        model.add(Dense(100, 100, activation=ReLU()))
+        model.add(Dropout())
+        model.add(Dense(100, 4, activation=SoftMax()))
+        
+        # Split data into training and validation sets for the current fold
+        x_train, y_train = x[train_idx], y_true[train_idx]
+        x_val, y_val = x[val_idx], y_true[val_idx]
+
+        # Train the model on the training set
+        model.train(x_train, y_train, epochs)
+        
+        # Compute the loss on the validation set
+        val_pred = model.forward(x_val, training=False)
+        val_loss = model.loss.forward(y_val, val_pred)
+
+        if val_loss < prev_loss:
+            prev_loss = val_loss
+            bestModel = model
+        
+        # Store the validation loss for this fold
+        fold_losses.append(val_loss)
+        print(f"Validation Loss for fold {fold+1}: {val_loss}")
+
+    # Calculate average loss across all folds
+    avg_loss = np.mean(fold_losses)
+    print(f"\nAverage Validation Loss across {n_splits} folds: {avg_loss}")
+
+    return bestModel
+
+
+
+
+
 
 
 
@@ -395,27 +459,36 @@ if __name__ == '__main__':
 
     
     # Define the model layers
-    flatten = Flatten()
-    dense1 = Dense(3*32*32, 100, activation=ReLU())
-    dense2 = Dense(100, 100, activation=ReLU())
-    dense3 = Dense(100, num_classes, activation=SoftMax())
+    # flatten = Flatten()
+    # dense1 = Dense(3*32*32, 100, activation=ReLU())
+    # dense2 = Dense(100, 100, activation=ReLU())
+    # dense3 = Dense(100, num_classes, activation=SoftMax())
 
-    # Define loss function and optimizer
-    loss_function = CrossEntropyLoss()
-    # optimizer = SGD(lr=0.001)
-    optimizer = Adam(lr=0.001)
+    # # Define loss function and optimizer
+    # loss_function = CrossEntropyLoss()
+    # # optimizer = SGD(lr=0.001)
+    # optimizer = Adam(lr=0.001)
 
-    model = FNN(optimizer=optimizer, loss=loss_function)
-    model.add(flatten)
-    model.add(dense1)
-    model.add(Dropout())
-    model.add(dense2)
-    model.add(Dropout())
-    model.add(dense3)
+    # model = FNN(optimizer=optimizer, loss=loss_function)
+    # model.add(flatten)
+    # model.add(dense1)
+    # model.add(Dropout())
+    # model.add(dense2)
+    # model.add(Dropout())
+    # model.add(dense3)
 
-    model.train(x, y_true, epochs=100)
-    y_pred = model.predict(x)
-    print(y_pred)
+    # model.train(x, y_true, epochs=100)
+    # y_pred = model.predict(x)
+    # print(y_pred)
+
+    # accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
+    # print(f"Accuracy: {accuracy}")
+
+
+    model = train(x, y_true, epochs=100, n_splits=5)
+
+    y_pred = model.forward(x, training=False)
 
     accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
+
     print(f"Accuracy: {accuracy}")
