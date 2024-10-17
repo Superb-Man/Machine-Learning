@@ -173,9 +173,9 @@ class Dense(Layer):
         grad_weights = np.dot(self.input.T,grad_output) # dL/dweights = x.T * dL/dz
         grad_bias = np.sum(grad_output,axis = 0)        # dL/db = sum(dL/dz)
 
-        grad_clip = 1.
-        grad_weights = np.clip(grad_weights,-grad_clip,grad_clip)
-        grad_bias = np.clip(grad_bias,-grad_clip,grad_clip)
+        # grad_clip = 1.
+        # grad_weights = np.clip(grad_weights,-grad_clip,grad_clip)
+        # grad_bias = np.clip(grad_bias,-grad_clip,grad_clip)
 
         grad_input = np.dot(grad_output,self.weights.T) # dL/dx = dL/dz * w.T
 
@@ -222,7 +222,7 @@ class CrossEntropyLoss(Loss):
         m = y_pred.shape[0] # number of samples
 
         # L = -sum(y_true * log(y_pred)) / m
-        loss = -np.sum(y_true * np.log(y_pred)) / m
+        loss = -np.sum(y_true * np.log(y_pred))
         return loss
 
         
@@ -238,7 +238,7 @@ class CrossEntropyLoss(Loss):
             y_true = self.one_hot(y_true,y_pred.shape[1])
 
         # dL/dy_pred = -y_true / y_pred / m
-        grad_output = -y_true / y_pred / m
+        grad_output = -y_true / y_pred
         return grad_output
     
 class MSE(Loss):
@@ -354,15 +354,22 @@ class FNN:
         return self.optimizer.step(self.layers,grad_output)
 
     def train(self,x,y_true,epochs):
+        x = x.to_numpy() if not isinstance(x,np.ndarray) else x
+        y_true = y_true.to_numpy() if not isinstance(y_true,np.ndarray) else y_true
+
         lrs = [0.001]
         for lr in lrs:
             self.optimizer.lr = lr
             for epoch in range(epochs):
-                x = self.forward(x)
-                loss = self.loss.forward(y_true,x)
+                y = self.forward(x)
+                loss = self.loss.forward(y_true,y)
                 print(f"Epoch: {epoch}, Loss: {loss}")
-                x = self.loss.backward(y_true,x)
-                x = self.backward(x)
+                dLoss = self.loss.backward(y_true,y)
+                self.backward(dLoss)
+
+    def predict(self,x):
+        x = x.to_numpy() if not isinstance(x,np.ndarray) else x
+        return self.forward(x,training = False)
 
 
 class KFold:
@@ -453,42 +460,42 @@ if __name__ == '__main__':
 
 
     # read x ttrain and y_train from npz file
-    # data = np.load('data.npz')
-    # x_train = data['x']
-    # y_train = data['y_true']
+    data = np.load('data.npz')
+    x_train = data['x']
+    y_train = data['y_true']
 
     
-    # Define the model layers
-    # flatten = Flatten()
-    # dense1 = Dense(3*32*32, 100, activation=ReLU())
-    # dense2 = Dense(100, 100, activation=ReLU())
-    # dense3 = Dense(100, num_classes, activation=SoftMax())
+    #Define the model layers
+    flatten = Flatten()
+    dense1 = Dense(3*32*32, 100, activation=ReLU())
+    dense2 = Dense(100, 100, activation=ReLU())
+    dense3 = Dense(100, num_classes, activation=SoftMax())
 
-    # # Define loss function and optimizer
-    # loss_function = CrossEntropyLoss()
-    # # optimizer = SGD(lr=0.001)
-    # optimizer = Adam(lr=0.001)
+    # Define loss function and optimizer
+    loss_function = CrossEntropyLoss()
+    # optimizer = SGD(lr=0.001)
+    optimizer = Adam(lr=0.001)
 
-    # model = FNN(optimizer=optimizer, loss=loss_function)
-    # model.add(flatten)
-    # model.add(dense1)
-    # model.add(Dropout())
-    # model.add(dense2)
-    # model.add(Dropout())
-    # model.add(dense3)
+    model = FNN(optimizer=optimizer, loss=loss_function)
+    model.add(flatten)
+    model.add(dense1)
+    model.add(Dropout())
+    model.add(dense2)
+    model.add(Dropout())
+    model.add(dense3)
 
-    # model.train(x, y_true, epochs=100)
-    # y_pred = model.predict(x)
-    # print(y_pred)
-
-    # accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
-    # print(f"Accuracy: {accuracy}")
-
-
-    model = train(x, y_true, epochs=100, n_splits=5)
-
-    y_pred = model.forward(x, training=False)
+    model.train(x, y_true, epochs=100)
+    y_pred = model.predict(x)
+    print(y_pred)
 
     accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
-
     print(f"Accuracy: {accuracy}")
+
+
+    # model = train(x, y_true, epochs=100, n_splits=5)
+
+    # y_pred = model.forward(x, training=False)
+
+    # accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
+
+    # print(f"Accuracy: {accuracy}")
