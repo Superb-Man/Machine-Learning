@@ -301,10 +301,9 @@ class SGD(Optimizer):
     def __init__(self,lr = 0.001):
         self.lr = lr
 
-    def update(self,layer,weights,grad_weights,bias,grad_bias):
+    def update(self, layer, weights, grad_weights):
         weights -= self.lr * grad_weights
-        bias -= self.lr * grad_bias
-        return weights,bias
+        return weights
     
     def step(self,layers,grad_output):
         for layer in reversed(layers):
