@@ -38,21 +38,18 @@ class Activation:
 
 
 class Dropout(Layer):
-    def __init__(self, p=0.2):
-        self.p = 1 - p
+    def __init__(self, dropProb=0.2):
+        self.dropProb = dropProb
         self.mask = None
     
     def forward(self, input):
-        np.random.seed(0)
-        # generate a mask with the same shape as the input
-        # mask = 1 with probability p
-        # mask = 0 with probability 1 - p
 
-        self.mask = np.random.binomial(1, self.p, size=input.shape) / self.p
-        return input * self.mask
+        self.mask = np.random.rand(*input.shape) > self.dropProb
+        return input * self.mask / (1 - self.dropProb)
     
     def backward(self, grad_output):
-        return grad_output * self.mask , None , None
+        return grad_output * self.mask / (1 - self.dropProb), None, None
+
 
     
 class ReLU(Activation):
@@ -70,8 +67,8 @@ class ReLU(Activation):
         "'grad_output: gradient of loss with respect to the output of this layer (batch_size, num_channels, width, height)'"
         "'grad_input: gradient of loss with respect to the input of this layer (batch_size, num_channels, width, height)'"
         # f'(x) = 1 if x > 0 else 0
-        grad_input = grad_output.copy()
-        grad_input[self.input <= 0] = 0
+        grad_input = grad_output * np.where(self.input > 0, 1, 0)
+        
         return grad_input
     
 class Sigmoid(Activation):
@@ -91,21 +88,28 @@ class Sigmoid(Activation):
         # f'(x) = grad_output * f(x) * (1 - f(x))
         return grad_output * self.output * (1 - self.output)
     
+
+
 class SoftMax(Activation):
     
-    def forward(self,input):
-        # Softmax formula
-        # f(x_i) = e^x_i / sum(exp(x_j))
+    EPSILON = 1e-8
+    MAX = 100
 
-        input = np.array(input) if not isinstance(input,np.ndarray) else input
-        # prevent overflow
-        input -= np.max(input, axis=-1, keepdims=True)
-        self.output = np.exp(input) / np.sum(np.exp(input), axis=-1, keepdims=True)
+    def forward(self, input):
+        # Softmax formula
+#       # f(x_i) = e^x_i / sum(exp(x_j))
+        input = np.array(input) if not isinstance(input, np.ndarray) else input
+        
+        input_clipped = np.copy(input)
+        input_clipped[input_clipped > SoftMax.MAX] = SoftMax.MAX
+        input_clipped[input_clipped < SoftMax.EPSILON] = SoftMax.EPSILON
+
+        exp_values = np.exp(input_clipped - np.max(input_clipped, axis=-1, keepdims=True))
+        self.output = exp_values / np.sum(exp_values, axis=-1, keepdims=True)
 
         return self.output
 
-    def backward(self,grad_output):
-
+    def backward(self, grad_output):
         # if i == j
         # dL/dx_i = f(x_i) * (1 - f(x_i)) * dL/df(x_i)
         # if i != j
@@ -119,6 +123,8 @@ class SoftMax(Activation):
         grad_input = self.output * (grad_output - np.sum(self.output * grad_output, axis=-1, keepdims=True))
 
         return grad_input
+
+
         
 
 
@@ -143,13 +149,10 @@ class Dense(Layer):
     '"Dense layer is a fully connected layer"'
     "'input_size: number of input features"
     "'output_size: number of output features"
-    def __init__(self,input_size,output_size,initializer = 'xaiver',activation = None):
-        denominator = 1
-        if initializer == 'xaiver':
-            denominator = np.sqrt(input_size)
-        
+    def __init__(self,input_size,output_size,activation = None):        
         np.random.seed(0)
-        self.weights = np.random.randn(input_size,output_size) / denominator
+        a = np.sqrt(6 / (input_size + output_size))
+        self.weights = np.random.uniform(-a, a, (input_size, output_size))
         self.bias = np.ones(output_size)
         self.activation = activation
 
@@ -222,7 +225,7 @@ class CrossEntropyLoss(Loss):
         m = y_pred.shape[0] # number of samples
 
         # L = -sum(y_true * log(y_pred)) / m
-        loss = -np.sum(y_true * np.log(y_pred))
+        loss = -np.mean(y_true * np.log(y_pred))
         return loss
 
         
@@ -264,6 +267,34 @@ class MSE(Loss):
         return grad_output
     
 
+class BCE_Loss(Loss):
+    def forward(self,y_true,y_pred):
+        "'y_true: true labels with shape (batch_size, num_classes)'"
+        "'y_pred: predicted labels with shape (batch_size, num_classes)'"
+        y_true = np.array(y_true) if not isinstance(y_true,np.ndarray) else y_true
+        y_pred = np.array(y_pred) if not isinstance(y_pred,np.ndarray) else y_pred
+
+        epsilon = 1e-10
+
+        # L = -sum(y_true * log(y_pred) + (1 - y_true) * log(1 - y_pred)) / m
+        m = y_pred.shape[0]
+        loss = -np.mean(y_true * np.log(y_pred + epsilon) + (1 - y_true) * np.log(1 - y_pred + epsilon))
+        return loss
+
+    def backward(self,y_true,y_pred):
+        "'grad_output: gradient of loss with respect to the output of this layer (batch_size, num_classes)'"
+        "'grad_input: gradient of loss with respect to the input of this layer (batch_size, num_classes)'"
+        epsilon = 1e-10
+
+        m = y_pred.shape[0]
+
+        # dL/dy_pred = -(y_true / y_pred - (1 - y_true) / (1 - y_pred)) / m
+        grad_output = -((y_true / (y_pred + epsilon)) - ((1 - y_true) / (1 - y_pred + epsilon))) / m
+        return grad_output
+    
+
+    
+
         
     
 # Stochastic Gradient Descent formula
@@ -299,11 +330,9 @@ class Adam(Optimizer):
         self.v = {}
         self.t = 0
         
-    def step(self, layers, grad_output):
+    def step(self, layers, grad_output):    
         self.t += 1
-        
         for idx, layer in enumerate(reversed(layers)):
-
             grad_output, grad_weights, grad_bias = layer.backward(grad_output) 
 
             if grad_weights is not None:
@@ -330,6 +359,11 @@ class Adam(Optimizer):
                 layer.bias = layer.bias - self.lr * m_hat_b / (np.sqrt(v_hat_b) + self.epsilon)
 
         return grad_output
+    
+    def reset(self):
+        self.m = {}
+        self.v = {}
+        self.t = 0
 
     
 
@@ -341,6 +375,8 @@ class FNN:
     
     def add(self,layer):
         self.layers.append(layer)
+
+    
     
     def forward(self,input,training = True):
         for layer in self.layers:
@@ -354,21 +390,43 @@ class FNN:
         return self.optimizer.step(self.layers,grad_output)
 
     def train(self,x,y_true,epochs):
-        x = x.to_numpy() if not isinstance(x,np.ndarray) else x
-        y_true = y_true.to_numpy() if not isinstance(y_true,np.ndarray) else y_true
-
-        lrs = [0.001]
+        x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
+        y_true = y_true.to_numpy().astype(float) if not isinstance(y_true,np.ndarray) else y_true
+        lrs = [0.0005]  
         for lr in lrs:
             self.optimizer.lr = lr
             for epoch in range(epochs):
-                y = self.forward(x)
-                loss = self.loss.forward(y_true,y)
+                y_pred = self.forward(x)
+                loss = self.loss.forward(y_true,y_pred)
                 print(f"Epoch: {epoch}, Loss: {loss}")
-                dLoss = self.loss.backward(y_true,y)
-                self.backward(dLoss)
+                gradiant = self.loss.backward(y_true,y_pred)
+                self.backward(gradiant)
+
+            
+    def batchTrain(self,x,y_true,epochs,batch_size = 16):
+        x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
+        y_true = y_true.to_numpy().astype(float) if not isinstance(y_true,np.ndarray) else y_true
+        lrs = [0.01,0.001,0.0001] 
+        for lr in lrs:
+            self.optimizer.lr = lr
+            for epoch in range(epochs):
+                # shuffle the data
+                indices = np.random.permutation(len(x)) 
+                np.random.shuffle(indices)
+                x = x[indices]
+                y_true = y_true[indices]
+                for i in range(0, len(x), batch_size):
+                    x_batch = x[i:i+batch_size]
+                    y_batch = y_true[i:i+batch_size]
+                    y_pred = self.forward(x_batch)
+                    loss = self.loss.forward(y_batch,y_pred)
+                    # print(f"Epoch: {epoch}, Loss: {loss}")
+                    gradiant = self.loss.backward(y_batch,y_pred)
+                    self.backward(gradiant)
+
 
     def predict(self,x):
-        x = x.to_numpy() if not isinstance(x,np.ndarray) else x
+        x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
         return self.forward(x,training = False)
 
 
@@ -463,6 +521,13 @@ if __name__ == '__main__':
     data = np.load('data.npz')
     x_train = data['x']
     y_train = data['y_true']
+    # print(y_train)
+
+    test = 0.2
+    x_train = x_train[:int((1-test)*len(x_train))]
+    y_train = y_train[:int((1-test)*len(y_train))]
+    x_test = x_train[int((1-test)*len(x_train)):]
+    y_test = y_train[int((1-test)*len(y_train)):]
 
     
     #Define the model layers
@@ -484,12 +549,13 @@ if __name__ == '__main__':
     model.add(Dropout())
     model.add(dense3)
 
-    model.train(x, y_true, epochs=100)
-    y_pred = model.predict(x)
-    print(y_pred)
+    model.train(x_train, y_train, epochs=100)
+    y_pred = model.predict(x_test)
+    # print(y_pred)
 
-    accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
+    accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_test, axis=1))
     print(f"Accuracy: {accuracy}")
+    print(y_test, y_pred)
 
 
     # model = train(x, y_true, epochs=100, n_splits=5)
