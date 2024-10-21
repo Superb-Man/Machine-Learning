@@ -1,5 +1,18 @@
 import numpy as np
-
+import torchvision.datasets as ds
+from torchvision import transforms
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+from typing import List
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+import pickle
+import torch
+from torchvision import datasets, transforms
 
 # batchsize = number of samples for now
 # num_units = next layer neurons/num_of_features
@@ -381,7 +394,7 @@ class FNN:
     def train(self,x,y_true,epochs):
         x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
         y_true = y_true.to_numpy().astype(float) if not isinstance(y_true,np.ndarray) else y_true
-        lrs = [0.0005]  
+        lrs = [0.001]  
         for lr in lrs:
             self.optimizer.lr = lr
             for epoch in range(epochs):
@@ -392,26 +405,37 @@ class FNN:
                 self.backward(gradiant)
 
             
-    def batchTrain(self,x,y_true,epochs,batch_size = 16):
-        x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
-        y_true = y_true.to_numpy().astype(float) if not isinstance(y_true,np.ndarray) else y_true
-        lrs = [0.01,0.001,0.0001] 
+    def batchTrain(self, x, y_true, epochs, batch_size=32):
+        x = x.to_numpy().astype(float) if not isinstance(x, np.ndarray) else x
+        y_true = y_true.to_numpy().astype(float) if not isinstance(y_true, np.ndarray) else y_true
+
+        lrs = [0.0001] 
+        
         for lr in lrs:
             self.optimizer.lr = lr
+            
             for epoch in range(epochs):
-                # shuffle the data
-                indices = np.random.permutation(len(x)) 
-                np.random.shuffle(indices)
+                indices = np.random.permutation(len(x))
                 x = x[indices]
                 y_true = y_true[indices]
+                
+                total_loss = 0. 
+                
                 for i in range(0, len(x), batch_size):
-                    x_batch = x[i:i+batch_size]
-                    y_batch = y_true[i:i+batch_size]
+                    x_batch = x[i:i + batch_size]
+                    y_batch = y_true[i:i + batch_size]
+                    
                     y_pred = self.forward(x_batch)
-                    loss = self.loss.forward(y_batch,y_pred)
-                    # print(f"Epoch: {epoch}, Loss: {loss}")
-                    gradiant = self.loss.backward(y_batch,y_pred)
-                    self.backward(gradiant)
+                    
+                    batch_loss = self.loss.forward(y_batch, y_pred)
+                    total_loss += batch_loss 
+                    
+                    gradient = self.loss.backward(y_batch, y_pred)
+                    self.backward(gradient)
+                
+                avg_loss = total_loss / len(x)
+                print(f"Epoch: {epoch + 1}, LR: {lr}, Avg Loss: {avg_loss}")
+
 
 
     def predict(self,x):
@@ -484,6 +508,10 @@ def train(x, y_true, epochs, n_splits=5):
     return bestModel
 
 
+################ MNIST DATA ################
+
+def normalize(x):
+    return x / 255.0
 
 
 
@@ -491,43 +519,30 @@ def train(x, y_true, epochs, n_splits=5):
 
 
 if __name__ == '__main__':
-    sample_size = 1000
-    num_classes = 4
-    input_shape = (sample_size, 3, 32, 32)
-    
-    # generatae same random data each time
-    np.random.seed(0)
-    x = np.random.randn(*input_shape)
-    # normalize the data
-    x = (x - np.mean(x)) / np.std(x)
 
-    np.random.seed(0)
-    y_true = np.eye(num_classes)[np.random.choice(num_classes, sample_size)]  # random one-hot labels
-    print(y_true.shape)
+    transform = transforms.ToTensor()
 
 
-    # read x ttrain and y_train from npz file
-    data = np.load('data.npz')
-    x_train = data['x']
-    y_train = data['y_true']
-    # print(y_train)
+    train_data = datasets.FashionMNIST(root='./data', train=True, transform=transform, download=True)
+    test_data = datasets.FashionMNIST(root='./data', train=False, transform=transform, download=True)
 
-    test = 0.2
-    x_train = x_train[:int((1-test)*len(x_train))]
-    y_train = y_train[:int((1-test)*len(y_train))]
-    x_test = x_train[int((1-test)*len(x_train)):]
-    y_test = y_train[int((1-test)*len(y_train)):]
+    x_train = train_data.data.numpy() 
+    x_train = x_train.reshape(-1, 1, 28, 28) 
+    x_train = normalize(x_train)
 
-    
-    #Define the model layers
+    x_test = test_data.data.numpy()
+    x_test = x_test.reshape(-1, 1, 28, 28)
+    x_test = normalize(x_test)
+
+    y_train = np.eye(10)[train_data.targets.numpy()]  
+    y_test = np.eye(10)[test_data.targets.numpy()]
+
     flatten = Flatten()
-    dense1 = Dense(3*32*32, 100)
-    dense2 = Dense(100, 100)
-    dense3 = Dense(100, num_classes)
+    dense1 = Dense(28*28, 256) 
+    dense2 = Dense(256, 64)
+    dense3 = Dense(64, 10) 
 
-    # Define loss function and optimizer
     loss_function = CrossEntropyLoss()
-    # optimizer = SGD(lr=0.001)
     optimizer = Adam(lr=0.001)
 
     model = FNN(optimizer=optimizer, loss=loss_function)
@@ -541,19 +556,83 @@ if __name__ == '__main__':
     model.add(dense3)
     model.add(SoftMax())
 
-    model.train(x_train, y_train, epochs=100)
-    y_pred = model.predict(x_test)
-    # print(y_pred)
+    model.batchTrain(x_train, y_train, epochs=50, batch_size=64)
 
+    y_pred = model.predict(x_test)
     accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_test, axis=1))
     print(f"Accuracy: {accuracy}")
-    # print(y_test, y_pred)
 
 
-    # model = train(x, y_true, epochs=100, n_splits=5)
 
-    # y_pred = model.forward(x, training=False)
 
-    # accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
 
-    # print(f"Accuracy: {accuracy}")
+
+
+
+# if __name__ == '__main__':
+#     sample_size = 1000
+#     num_classes = 4
+#     input_shape = (sample_size, 3, 32, 32)
+    
+#     # generatae same random data each time
+#     np.random.seed(0)
+#     x = np.random.randn(*input_shape)
+#     # normalize the data
+#     x = (x - np.mean(x)) / np.std(x)
+
+#     np.random.seed(0)
+#     y_true = np.eye(num_classes)[np.random.choice(num_classes, sample_size)]  # random one-hot labels
+#     print(y_true.shape)
+
+
+#     # read x ttrain and y_train from npz file
+#     # data = np.load('data.npz')
+#     # x_train = data['x']
+#     # y_train = data['y_true']
+#     # print(y_train)
+
+#     test = 0.2
+#     x_train = x[:int((1-test)*len(x))]
+#     y_train = y_true[:int((1-test)*len(y_true))]
+#     x_test = x_train[int((1-test)*len(x_train)):]
+#     y_test = y_train[int((1-test)*len(y_train)):]
+
+    
+#     #Define the model layers
+#     flatten = Flatten()
+#     dense1 = Dense(3*32*32, 100)
+#     dense2 = Dense(100, 100)
+#     dense3 = Dense(100, num_classes)
+
+#     # Define loss function and optimizer
+#     loss_function = CrossEntropyLoss()
+#     # optimizer = SGD(lr=0.001)
+#     optimizer = Adam(lr=0.001)
+
+#     model = FNN(optimizer=optimizer, loss=loss_function)
+#     model.add(flatten)
+#     model.add(dense1)
+#     model.add(ReLU())
+#     model.add(Dropout())
+#     model.add(dense2)
+#     model.add(ReLU())
+#     model.add(Dropout())
+#     model.add(dense3)
+#     model.add(SoftMax())
+
+#     model.train(x_train, y_train, epochs=100)
+#     y_pred = model.predict(x_test)
+#     # print(y_pred)
+
+#     accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_test, axis=1))
+#     print(f"Accuracy: {accuracy}")
+#     # print(y_test, y_pred)
+
+
+#     # model = train(x, y_true, epochs=100, n_splits=5)
+
+#     # y_pred = model.forward(x, training=False)
+
+#     # accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
+
+#     # print(f"Accuracy: {accuracy}")
