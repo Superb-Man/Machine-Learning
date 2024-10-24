@@ -302,8 +302,70 @@ class BCE_Loss(Loss):
         grad_output = -((y_true / (y_pred + epsilon)) - ((1 - y_true) / (1 - y_pred + epsilon))) / m
         return grad_output
     
+class BatchNormalization(Layer):
+    def __init__(self, input_size, momentum=0.9, epsilon=1e-5):
+        # Initialize gamma (scaling) and beta (shifting) parameters
+        self.gamma = np.ones(input_size)
+        self.beta = np.zeros(input_size)
+        
+        # Moving averages for inference
+        self.moving_mean = np.zeros(input_size)
+        self.moving_variance = np.ones(input_size)
+        
+        # Hyperparameters
+        self.momentum = momentum
+        self.epsilon = epsilon
+        self.id = id(self)
+        self.training = True
+    
+    def forward(self, input):
+        self.input = input
+
+        if self.training:
+            # Calculate batch mean and variance
+            self.batch_mean = np.mean(input, axis=0)
+            self.batch_variance = np.var(input, axis=0)
+            
+            # Normalize input
+            self.x_hat = (input - self.batch_mean) / np.sqrt(self.batch_variance + self.epsilon)
+            
+            # Scale and shift
+            output = self.gamma * self.x_hat + self.beta
+            
+            # Update moving averages
+            self.moving_mean = self.momentum * self.moving_mean + (1 - self.momentum) * self.batch_mean
+            self.moving_variance = self.momentum * self.moving_variance + (1 - self.momentum) * self.batch_variance
+        else:
+            # Normalize input using moving averages
+            x_hat = (input - self.moving_mean) / np.sqrt(self.moving_variance + self.epsilon)
+            
+            # Scale and shift
+            output = self.gamma * x_hat + self.beta
+        
+        return output
+
+    def backward(self, grad_output, optimizer: Optimizer):
+        # Gradients w.r.t. gamma and beta
+        grad_gamma = np.sum(grad_output * self.x_hat, axis=0)
+        grad_beta = np.sum(grad_output, axis=0)
+
+        # Gradient of the normalized input (x_hat)
+        grad_x_hat = grad_output * self.gamma
+        
+        # Gradients w.r.t. input (chain rule)
+        batch_size = self.input.shape[0]
+        grad_variance = np.sum(grad_x_hat * (self.input - self.batch_mean) * -0.5 * (self.batch_variance + self.epsilon) ** (-3/2), axis=0)
+        grad_mean = np.sum(grad_x_hat * -1 / np.sqrt(self.batch_variance + self.epsilon), axis=0) + grad_variance * np.sum(-2 * (self.input - self.batch_mean), axis=0) / batch_size
+        grad_input = grad_x_hat / np.sqrt(self.batch_variance + self.epsilon) + grad_variance * 2 * (self.input - self.batch_mean) / batch_size + grad_mean / batch_size
+        
+        layer_id = str(self.id)
+        self.gamma = optimizer.update(layer_id+'gamma', self.gamma, grad_gamma)
+        self.beta = optimizer.update(layer_id+'beta', self.beta, grad_beta)
+        
+        return grad_input
 
     
+
 
         
     
@@ -367,13 +429,31 @@ class Adam(Optimizer):
         self.v = {}
         self.t = 0
 
-    
+
+
+def accuracy_score(y_true, y_pred):
+    return np.mean(np.argmax(y_true, axis=1) == np.argmax(y_pred, axis=1))
+
+def F1_score(y_true, y_pred):
+    return f1_score(np.argmax(y_true, axis=1), np.argmax(y_pred, axis=1), average='macro')
+
+def confusion_matrix(y_true, y_pred):
+    return confusion_matrix(np.argmax(y_true, axis=1), np.argmax(y_pred, axis=1))
+
+def evaluate(x,y,model):
+    y_pred = model.predict(x)
+    loss = model.loss.forward(y,y_pred)
+
+    acc = accuracy_score(y,y_pred)
+    f1 = F1_score(y,y_pred)
+    return acc,f1,loss
 
 class FNN:
     def __init__(self,optimizer = Adam(),loss = CrossEntropyLoss()):
         self.layers = []
         self.optimizer = optimizer
         self.loss = loss
+        self.bestModel = None
     
     def add(self,layer):
         self.layers.append(layer)
@@ -383,8 +463,14 @@ class FNN:
     def forward(self,input,training = True):
         for layer in self.layers:
             if training == False:
+                if isinstance(layer,BatchNormalization):
+                    layer.training = False
                 if isinstance(layer,Dropout):
                     continue
+            else :
+                if isinstance(layer,BatchNormalization):
+                    layer.training = True
+                    
             input = layer.forward(input)
         return input
     
@@ -409,10 +495,14 @@ class FNN:
         x = x.to_numpy().astype(float) if not isinstance(x, np.ndarray) else x
         y_true = y_true.to_numpy().astype(float) if not isinstance(y_true, np.ndarray) else y_true
 
-        lrs = [0.0001] 
+        # lrs = [0.005,0.0001,0.00005,0.000001]
+        lrs = [0.0001]
         
         for lr in lrs:
             self.optimizer.lr = lr
+            self.optimizer.reset()
+
+            best_f1 = 0.
             
             for epoch in range(epochs):
                 indices = np.random.permutation(len(x))
@@ -420,27 +510,62 @@ class FNN:
                 y_true = y_true[indices]
                 
                 total_loss = 0. 
+                accuracy = 0.
+
+                if len(x) % batch_size != 0:
+                    batch_size += 1
                 
                 for i in range(0, len(x), batch_size):
                     x_batch = x[i:i + batch_size]
                     y_batch = y_true[i:i + batch_size]
                     
                     y_pred = self.forward(x_batch)
-                    
-                    batch_loss = self.loss.forward(y_batch, y_pred)
-                    total_loss += batch_loss 
+                    total_loss += self.loss.forward(y_batch, y_pred)
+
+                    accuracy += accuracy_score(y_batch, y_pred)
                     
                     gradient = self.loss.backward(y_batch, y_pred)
                     self.backward(gradient)
                 
-                avg_loss = total_loss / len(x)
+                avg_loss = total_loss / (len(x) // batch_size)
+                accuracy = accuracy / (len(x) // batch_size)
                 print(f"Epoch: {epoch + 1}, LR: {lr}, Avg Loss: {avg_loss}")
+                print(f"Accuracy: {accuracy}")
+
+                # validation loss, accuracy, f1 score
+
+                val_acc, f1_score, val_loss = evaluate(x, y_true, self)
+
+                print(f"Validation Accuracy: {val_acc}, Validation F1 Score: {f1_score}, Validation Loss: {val_loss}")
+
+                if f1_score > best_f1:
+                    self.bestModel = self
+                    best_f1 = f1_score
+
+        return self.bestModel
+
+                
 
 
 
     def predict(self,x):
         x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
         return self.forward(x,training = False)
+    
+
+
+
+def trainModels(x_train, y_train, x_val, y_val, models, epochs=50):
+
+    validation_size = 0.2
+    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=validation_size, random_state=42)
+
+    for model in models:
+        model.batchTrain(x_train, y_train, epochs=epochs, batch_size=64)
+        acc, f1, loss = evaluate(x_val, y_val, model)
+        print(f"Accuracy: {acc}, F1 Score: {f1}, Loss: {loss}")
+
+    return models
 
 
 class KFold:
@@ -464,48 +589,6 @@ class KFold:
             current = stop
 
 
-def train(x, y_true, epochs, n_splits=5):
-    kfold = KFold(n_splits=n_splits)
-    
-    fold_losses = []
-    bestModel = None
-    prev_loss = np.inf
-
-    # Loop over each fold
-    for fold, (train_layer, val_layer) in enumerate(kfold.split(x)):
-        print(f"\n--- Fold {fold+1} ---")
-        model = FNN(optimizer=Adam(lr=0.001), loss=CrossEntropyLoss())
-        model.add(Flatten())
-        model.add(Dense(3*32*32, 100, activation=ReLU()))
-        model.add(Dropout())
-        model.add(Dense(100, 100, activation=ReLU()))
-        model.add(Dropout())
-        model.add(Dense(100, 4, activation=SoftMax()))
-        
-        # Split data into training and validation sets for the current fold
-        x_train, y_train = x[train_layer], y_true[train_layer]
-        x_val, y_val = x[val_layer], y_true[val_layer]
-
-        # Train the model on the training set
-        model.train(x_train, y_train, epochs)
-        
-        # Compute the loss on the validation set
-        val_pred = model.forward(x_val, training=False)
-        val_loss = model.loss.forward(y_val, val_pred)
-
-        if val_loss < prev_loss:
-            prev_loss = val_loss
-            bestModel = model
-        
-        # Store the validation loss for this fold
-        fold_losses.append(val_loss)
-        print(f"Validation Loss for fold {fold+1}: {val_loss}")
-
-    # Calculate average loss across all folds
-    avg_loss = np.mean(fold_losses)
-    print(f"\nAverage Validation Loss across {n_splits} folds: {avg_loss}")
-
-    return bestModel
 
 
 ################ MNIST DATA ################
@@ -539,8 +622,9 @@ if __name__ == '__main__':
 
     flatten = Flatten()
     dense1 = Dense(28*28, 256) 
-    dense2 = Dense(256, 64)
-    dense3 = Dense(64, 10) 
+    dense2 = Dense(256, 128)
+    dense3 = Dense(128, 100)
+    dense4 = Dense(100, 10)
 
     loss_function = CrossEntropyLoss()
     optimizer = Adam(lr=0.001)
@@ -548,25 +632,27 @@ if __name__ == '__main__':
     model = FNN(optimizer=optimizer, loss=loss_function)
     model.add(flatten)
     model.add(dense1)
+    model.add(BatchNormalization(256))
     model.add(ReLU())
     model.add(Dropout())
     model.add(dense2)
+    model.add(BatchNormalization(128))
     model.add(ReLU())
     model.add(Dropout())
     model.add(dense3)
+    model.add(BatchNormalization(100))
+    model.add(ReLU())
+    model.add(Dropout())
+    model.add(dense4)
     model.add(SoftMax())
 
-    model.batchTrain(x_train, y_train, epochs=50, batch_size=64)
+    best = model.batchTrain(x_train, y_train, epochs=50, batch_size=64)
 
-    y_pred = model.predict(x_test)
+    y_pred = best.predict(x_test)
     accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_test, axis=1))
+    f1_score = f1_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='macro')
     print(f"Accuracy: {accuracy}")
-
-
-
-
-
-
+    print(f"F1 Score: {f1_score}")
 
 
 # if __name__ == '__main__':
