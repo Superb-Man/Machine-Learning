@@ -1,6 +1,4 @@
 import numpy as np
-import torchvision.datasets as ds
-from torchvision import transforms
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,6 +11,9 @@ import seaborn as sns
 import pickle
 import torch
 from torchvision import datasets, transforms
+import copy
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # batchsize = number of samples for now
 # num_units = next layer neurons/num_of_features
@@ -84,6 +85,7 @@ class ReLU(Activation):
         "'grad_input: gradient of loss with respect to the input of this layer (batch_size, num_channels, width, height)'"
         # f'(x) = 1 if x > 0 else 0
         grad_input = grad_output * np.where(self.input > 0, 1, 0)
+
         return grad_input
     
 class Sigmoid(Activation):
@@ -503,6 +505,7 @@ class FNN:
             self.optimizer.reset()
 
             best_f1 = 0.
+            self.bestModel = FNN(optimizer=self.optimizer, loss=self.loss)
             
             for epoch in range(epochs):
                 indices = np.random.permutation(len(x))
@@ -539,7 +542,7 @@ class FNN:
                 print(f"Validation Accuracy: {val_acc}, Validation F1 Score: {f1_score}, Validation Loss: {val_loss}")
 
                 if f1_score > best_f1:
-                    self.bestModel = self
+                    self.bestModel.layers = copy.deepcopy(self.layers)
                     best_f1 = f1_score
 
         return self.bestModel
@@ -655,70 +658,3 @@ if __name__ == '__main__':
     print(f"F1 Score: {f1_score}")
 
 
-# if __name__ == '__main__':
-#     sample_size = 1000
-#     num_classes = 4
-#     input_shape = (sample_size, 3, 32, 32)
-    
-#     # generatae same random data each time
-#     np.random.seed(0)
-#     x = np.random.randn(*input_shape)
-#     # normalize the data
-#     x = (x - np.mean(x)) / np.std(x)
-
-#     np.random.seed(0)
-#     y_true = np.eye(num_classes)[np.random.choice(num_classes, sample_size)]  # random one-hot labels
-#     print(y_true.shape)
-
-
-#     # read x ttrain and y_train from npz file
-#     # data = np.load('data.npz')
-#     # x_train = data['x']
-#     # y_train = data['y_true']
-#     # print(y_train)
-
-#     test = 0.2
-#     x_train = x[:int((1-test)*len(x))]
-#     y_train = y_true[:int((1-test)*len(y_true))]
-#     x_test = x_train[int((1-test)*len(x_train)):]
-#     y_test = y_train[int((1-test)*len(y_train)):]
-
-    
-#     #Define the model layers
-#     flatten = Flatten()
-#     dense1 = Dense(3*32*32, 100)
-#     dense2 = Dense(100, 100)
-#     dense3 = Dense(100, num_classes)
-
-#     # Define loss function and optimizer
-#     loss_function = CrossEntropyLoss()
-#     # optimizer = SGD(lr=0.001)
-#     optimizer = Adam(lr=0.001)
-
-#     model = FNN(optimizer=optimizer, loss=loss_function)
-#     model.add(flatten)
-#     model.add(dense1)
-#     model.add(ReLU())
-#     model.add(Dropout())
-#     model.add(dense2)
-#     model.add(ReLU())
-#     model.add(Dropout())
-#     model.add(dense3)
-#     model.add(SoftMax())
-
-#     model.train(x_train, y_train, epochs=100)
-#     y_pred = model.predict(x_test)
-#     # print(y_pred)
-
-#     accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_test, axis=1))
-#     print(f"Accuracy: {accuracy}")
-#     # print(y_test, y_pred)
-
-
-#     # model = train(x, y_true, epochs=100, n_splits=5)
-
-#     # y_pred = model.forward(x, training=False)
-
-#     # accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
-
-#     # print(f"Accuracy: {accuracy}")
