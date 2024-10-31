@@ -657,4 +657,3 @@ if __name__ == '__main__':
     print(f"Accuracy: {accuracy}")
     print(f"F1 Score: {f1_score}")
 
-
