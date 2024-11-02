@@ -431,6 +431,13 @@ class Adam(Optimizer):
         self.v = {}
         self.t = 0
 
+class LR_Scheduler:
+    def exSchedule(self,alpha,gamma = 0.95,epoch = 0):
+        return alpha * gamma ** epoch
+    
+    def cosineAnnealing(self,alpha,epoch,T_max = 10):
+        return alpha * 0.5 * (1 + np.cos(epoch / T_max * np.pi))
+
 
 
 def accuracy_score(y_true, y_pred):
@@ -544,6 +551,9 @@ class FNN:
                 if f1_score > best_f1:
                     self.bestModel.layers = copy.deepcopy(self.layers)
                     best_f1 = f1_score
+                
+                # if epoch % 5 == 0:
+                #     self.optimizer.lr = LR_Scheduler().exSchedule(lr, epoch)
 
         return self.bestModel
 
@@ -646,7 +656,14 @@ if __name__ == '__main__':
     model.add(BatchNormalization(100))
     model.add(ReLU())
     model.add(Dropout())
-    model.add(dense4)
+    model.add(Dense(100, 128))
+    model.add(BatchNormalization(128))
+    model.add(ReLU())
+    model.add(Dense(128, 256))
+    model.add(BatchNormalization(256))
+    model.add(ReLU())
+    model.add(Dense(256, 10))
+    # model.add(dense4)
     model.add(SoftMax())
 
     best = model.batchTrain(x_train, y_train, epochs=50, batch_size=64)
