@@ -32,6 +32,12 @@ class Layer:
 
     def backward(self, grad_output,optimizer:Optimizer):
         raise NotImplementedError
+    
+    def get_params(self):
+        raise NotImplementedError
+    
+    def clear(self):
+        pass
 
 class Loss:
     def forward(self, y_true, y_pred):
@@ -39,6 +45,7 @@ class Loss:
     
     def backward(self, y_true, y_pred):
         raise NotImplementedError
+    
 
     
 
@@ -48,7 +55,12 @@ class Activation(Layer):
     
     def backward(self,grad_output,optimizer:Optimizer):
         pass
+
+    def get_params(self):
+        pass
         
+    def clear(self):
+        pass
 
 
 ########################################################## CLASS DEFINITIONS ##########################################################
@@ -66,6 +78,12 @@ class Dropout(Layer):
     
     def backward(self, grad_output,optimizer:Optimizer):
         return grad_output * self.mask / (1 - self.dropProb)
+    
+    def get_params(self):
+        return 0
+    
+    def clear(self):   
+        self.mask = None
 
 
     
@@ -88,6 +106,13 @@ class ReLU(Activation):
 
         return grad_input
     
+    def get_params(self):
+        # number of parameters in the layer
+        return 0
+    
+    def clear(self):
+        self.input = None
+    
 class Sigmoid(Activation):
     def forward(self,input):
         "'input: input data with shape (batch_size, num_channels, width, height)'"
@@ -106,6 +131,13 @@ class Sigmoid(Activation):
         gard_input = grad_output * self.output * (1 - self.output) , None , None
 
         return gard_input
+    
+    def get_params(self):
+        # number of parameters in the layer
+        return 0
+    
+    def clear(self):
+        self.output = None
     
 
 
@@ -141,6 +173,14 @@ class SoftMax(Activation):
 
         grad_input = self.output * (grad_output - np.sum(self.output * grad_output, axis=-1, keepdims=True))
         return grad_input 
+
+    
+    def get_params(self):
+        # number of parameters in the layer
+        return 0
+    
+    def clear(self):
+        self.output = None
     
 
 
@@ -197,6 +237,13 @@ class Dense(Layer):
         # self.weights,self.bias = optimizer.update(self,self.weights,grad_weights,self.bias,grad_bias)
 
         return grad_input
+    
+    def get_params(self):
+        return self.weights.size + self.bias.size
+    
+    def clear(self):
+        self.input = None
+        self.output = None
 
 
 class Flatten(Layer):
@@ -211,6 +258,12 @@ class Flatten(Layer):
         "'grad_output: gradient of loss with respect to the output of this layer (batch_size, num_channels*width*height)'"
         "'grad_input: gradient of loss with respect to the input of this layer (batch_size, num_channels, width, height)'"
         return grad_output.reshape(self.input_shape)
+    
+    def get_params(self):
+        return 0
+    
+    def clear(self):
+        self.input_shape = None
     
 
 class CrossEntropyLoss(Loss):
@@ -256,6 +309,32 @@ class CrossEntropyLoss(Loss):
         grad_output = -y_true / y_pred
         return grad_output
     
+class NegativePenaltyCrossEntropyLoss(CrossEntropyLoss):
+    def __init__(self, penalty_weight=0.1):
+        super().__init__()
+        self.penalty_weight = penalty_weight  # Scale for the penalty term
+
+    def forward(self, y_true, y_pred):
+        base_loss = super().forward(y_true, y_pred)  # Base cross-entropy loss
+
+        # Penalty term to discourage high-confidence incorrect predictions
+        incorrect_confidence = (1 - y_true) * y_pred  # Confidence for incorrect predictions
+        penalty_term = np.mean(np.square(incorrect_confidence))  # Penalty based on confidence
+
+        # Final loss: base cross-entropy + weighted penalty
+        total_loss = base_loss + self.penalty_weight * penalty_term
+        return total_loss
+
+    def backward(self, y_true, y_pred):
+        grad_output = super().backward(y_true, y_pred)  # Base gradient from cross-entropy loss
+
+        # Additional gradient from the penalty term
+        penalty_grad = 2 * (1 - y_true) * y_pred / y_pred.shape[0]
+        grad_output += self.penalty_weight * penalty_grad
+
+        return grad_output
+
+    
 class MSE(Loss):
     def forward(self,y_true,y_pred):
         "'y_true: true labels with shape (batch_size, num_classes)'"
@@ -277,6 +356,7 @@ class MSE(Loss):
         m = y_pred.shape[0]
         grad_output = -2 * (y_true - y_pred) / m
         return grad_output
+    
     
 
 class BCE_Loss(Loss):
@@ -303,6 +383,8 @@ class BCE_Loss(Loss):
         # dL/dy_pred = -(y_true / y_pred - (1 - y_true) / (1 - y_pred)) / m
         grad_output = -((y_true / (y_pred + epsilon)) - ((1 - y_true) / (1 - y_pred + epsilon))) / m
         return grad_output
+    
+    
     
 class BatchNormalization(Layer):
     def __init__(self, input_size, momentum=0.9, epsilon=1e-5):
@@ -365,6 +447,15 @@ class BatchNormalization(Layer):
         self.beta = optimizer.update(layer_id+'beta', self.beta, grad_beta)
         
         return grad_input
+    
+    def get_params(self):
+        return self.gamma.size + self.beta.size
+    
+    def clear(self):
+        self.input = None
+        self.batch_mean = None
+        self.batch_variance = None
+        self.x_hat = None
 
     
 
@@ -386,6 +477,9 @@ class SGD(Optimizer):
         for layer in reversed(layers):
             grad_output= layer.backward(grad_output)
         return grad_output
+    
+    def reset():
+        pass
 
 # Adam Optimizer formulas
 # m = beta1 * m + (1 - beta1) * dL/dweights
@@ -437,29 +531,13 @@ class LR_Scheduler:
     
     def cosineAnnealing(self,alpha,epoch,T_max = 10):
         return alpha * 0.5 * (1 + np.cos(epoch / T_max * np.pi))
-
-
-
-def accuracy_score(y_true, y_pred):
-    return np.mean(np.argmax(y_true, axis=1) == np.argmax(y_pred, axis=1))
-
-def F1_score(y_true, y_pred):
-    return f1_score(np.argmax(y_true, axis=1), np.argmax(y_pred, axis=1), average='macro')
-
-def confusion_matrix(y_true, y_pred):
-    return confusion_matrix(np.argmax(y_true, axis=1), np.argmax(y_pred, axis=1))
-
-def evaluate(x,y,model):
-    y_pred = model.predict(x)
-    loss = model.loss.forward(y,y_pred)
-
-    acc = accuracy_score(y,y_pred)
-    f1 = F1_score(y,y_pred)
-    return acc,f1,loss
+    
 
 class FNN:
-    def __init__(self,optimizer = Adam(),loss = CrossEntropyLoss()):
-        self.layers = []
+    def __init__(self,layers = None,optimizer = Adam(),loss = CrossEntropyLoss()):
+        if layers is None:
+            layers = []
+        self.layers = layers
         self.optimizer = optimizer
         self.loss = loss
         self.bestModel = None
@@ -485,192 +563,30 @@ class FNN:
     
     def backward(self,grad_output):
         return self.optimizer.step(self.layers,grad_output)
-
-    def train(self,x,y_true,epochs):
-        x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
-        y_true = y_true.to_numpy().astype(float) if not isinstance(y_true,np.ndarray) else y_true
-        lrs = [0.001]  
-        for lr in lrs:
-            self.optimizer.lr = lr
-            for epoch in range(epochs):
-                y_pred = self.forward(x)
-                loss = self.loss.forward(y_true,y_pred)
-                print(f"Epoch: {epoch}, Loss: {loss}")
-                gradiant = self.loss.backward(y_true,y_pred)
-                self.backward(gradiant)
-
-            
-    def batchTrain(self, x, y_true, epochs, batch_size=32):
-        x = x.to_numpy().astype(float) if not isinstance(x, np.ndarray) else x
-        y_true = y_true.to_numpy().astype(float) if not isinstance(y_true, np.ndarray) else y_true
-
-        # lrs = [0.005,0.0001,0.00005,0.000001]
-        lrs = [0.0001]
-        
-        for lr in lrs:
-            self.optimizer.lr = lr
-            self.optimizer.reset()
-
-            best_f1 = 0.
-            self.bestModel = FNN(optimizer=self.optimizer, loss=self.loss)
-            
-            for epoch in range(epochs):
-                indices = np.random.permutation(len(x))
-                x = x[indices]
-                y_true = y_true[indices]
-                
-                total_loss = 0. 
-                accuracy = 0.
-
-                if len(x) % batch_size != 0:
-                    batch_size += 1
-                
-                for i in range(0, len(x), batch_size):
-                    x_batch = x[i:i + batch_size]
-                    y_batch = y_true[i:i + batch_size]
-                    
-                    y_pred = self.forward(x_batch)
-                    total_loss += self.loss.forward(y_batch, y_pred)
-
-                    accuracy += accuracy_score(y_batch, y_pred)
-                    
-                    gradient = self.loss.backward(y_batch, y_pred)
-                    self.backward(gradient)
-                
-                avg_loss = total_loss / (len(x) // batch_size)
-                accuracy = accuracy / (len(x) // batch_size)
-                print(f"Epoch: {epoch + 1}, LR: {lr}, Avg Loss: {avg_loss}")
-                print(f"Accuracy: {accuracy}")
-
-                # validation loss, accuracy, f1 score
-
-                val_acc, f1_score, val_loss = evaluate(x, y_true, self)
-
-                print(f"Validation Accuracy: {val_acc}, Validation F1 Score: {f1_score}, Validation Loss: {val_loss}")
-
-                if f1_score > best_f1:
-                    self.bestModel.layers = copy.deepcopy(self.layers)
-                    best_f1 = f1_score
-                
-                # if epoch % 5 == 0:
-                #     self.optimizer.lr = LR_Scheduler().exSchedule(lr, epoch)
-
-        return self.bestModel
-
-                
-
-
-
-    def predict(self,x):
-        x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
-        return self.forward(x,training = False)
     
-
-
-
-def trainModels(x_train, y_train, x_val, y_val, models, epochs=50):
-
-    validation_size = 0.2
-    x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=validation_size, random_state=42)
-
-    for model in models:
-        model.batchTrain(x_train, y_train, epochs=epochs, batch_size=64)
-        acc, f1, loss = evaluate(x_val, y_val, model)
-        print(f"Accuracy: {acc}, F1 Score: {f1}, Loss: {loss}")
-
-    return models
-
-
-class KFold:
-    def __init__(self, n_splits=5):
-        self.n_splits = n_splits
+    def get_params(self):
+        return sum([layer.get_params() for layer in self.layers])
     
-    def split(self, X):
-        X = np.array(X)
-        n_samples = len(X)
-        indices = np.arange(n_samples)
-
-        fold_sizes = np.full(self.n_splits, n_samples // self.n_splits, dtype=int)
-        fold_sizes[:n_samples % self.n_splits] += 1
-
-        current = 0
-        for fold_size in fold_sizes:
-            start, stop = current, current + fold_size
-            val_indices = indices[start:stop]
-            train_indices = np.concatenate([indices[:start], indices[stop:]])
-            yield train_indices, val_indices
-            current = stop
+    def clear(self):
+        for layer in self.layers:
+            layer.clear()
 
 
+def saveModel(model, path):
+    with open(path, 'wb') as file:
+        pickle.dump(model.layers, file)
+
+def loadModel(path):
+    with open(path, 'rb') as file:
+        model = FNN(layers=pickle.load(file))
+    return model   
 
 
-################ MNIST DATA ################
 
 def normalize(x):
     return x / 255.0
 
 
-
-
-
-
-if __name__ == '__main__':
-
-    transform = transforms.ToTensor()
-
-
-    train_data = datasets.FashionMNIST(root='./data', train=True, transform=transform, download=True)
-    test_data = datasets.FashionMNIST(root='./data', train=False, transform=transform, download=True)
-
-    x_train = train_data.data.numpy() 
-    x_train = x_train.reshape(-1, 1, 28, 28) 
-    x_train = normalize(x_train)
-
-    x_test = test_data.data.numpy()
-    x_test = x_test.reshape(-1, 1, 28, 28)
-    x_test = normalize(x_test)
-
-    y_train = np.eye(10)[train_data.targets.numpy()]  
-    y_test = np.eye(10)[test_data.targets.numpy()]
-
-    flatten = Flatten()
-    dense1 = Dense(28*28, 256) 
-    dense2 = Dense(256, 128)
-    dense3 = Dense(128, 100)
-    dense4 = Dense(100, 10)
-
-    loss_function = CrossEntropyLoss()
-    optimizer = Adam(lr=0.001)
-
-    model = FNN(optimizer=optimizer, loss=loss_function)
-    model.add(flatten)
-    model.add(dense1)
-    model.add(BatchNormalization(256))
-    model.add(ReLU())
-    model.add(Dropout())
-    model.add(dense2)
-    model.add(BatchNormalization(128))
-    model.add(ReLU())
-    model.add(Dropout())
-    model.add(dense3)
-    model.add(BatchNormalization(100))
-    model.add(ReLU())
-    model.add(Dropout())
-    model.add(Dense(100, 128))
-    model.add(BatchNormalization(128))
-    model.add(ReLU())
-    model.add(Dense(128, 256))
-    model.add(BatchNormalization(256))
-    model.add(ReLU())
-    model.add(Dense(256, 10))
-    # model.add(dense4)
-    model.add(SoftMax())
-
-    best = model.batchTrain(x_train, y_train, epochs=50, batch_size=64)
-
-    y_pred = best.predict(x_test)
-    accuracy = np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_test, axis=1))
-    f1_score = f1_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='macro')
-    print(f"Accuracy: {accuracy}")
-    print(f"F1 Score: {f1_score}")
-
+def predict(model,x):
+    x = x.to_numpy().astype(float) if not isinstance(x,np.ndarray) else x
+    return model.forward(x,training = False)
