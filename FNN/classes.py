@@ -315,10 +315,9 @@ class NegativePenaltyCrossEntropyLoss(CrossEntropyLoss):
         self.penalty_weight = penalty_weight  # Scale for the penalty term
 
     def forward(self, y_true, y_pred):
-        base_loss = super().forward(y_true, y_pred)  # Base cross-entropy loss
+        base_loss = super().forward(y_true, y_pred) 
 
-        # Penalty term to discourage high-confidence incorrect predictions
-        incorrect_confidence = (1 - y_true) * y_pred  # Confidence for incorrect predictions
+        incorrect_confidence = (1 - y_true) * y_pred  
         penalty_term = np.mean(np.square(incorrect_confidence))  # Penalty based on confidence
 
         # Final loss: base cross-entropy + weighted penalty
@@ -326,9 +325,8 @@ class NegativePenaltyCrossEntropyLoss(CrossEntropyLoss):
         return total_loss
 
     def backward(self, y_true, y_pred):
-        grad_output = super().backward(y_true, y_pred)  # Base gradient from cross-entropy loss
+        grad_output = super().backward(y_true, y_pred)  
 
-        # Additional gradient from the penalty term
         penalty_grad = 2 * (1 - y_true) * y_pred / y_pred.shape[0]
         grad_output += self.penalty_weight * penalty_grad
 

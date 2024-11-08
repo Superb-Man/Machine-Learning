@@ -12,6 +12,7 @@ import pickle
 import torch
 from torchvision import datasets, transforms
 import copy
+import os
 
 def accuracy_score(y_true, y_pred):
     return np.mean(np.argmax(y_pred, axis=1) == np.argmax(y_true, axis=1))
@@ -20,9 +21,11 @@ def F1_score(y_true, y_pred):
 
 
 def plot_confusion_matrix(y_true, y_pred,lr):
+    # if not os.path.exists(str(lr)):
+    #     os.makedirs(str(lr))
     cm = confusion_matrix(np.argmax(y_true,axis=1), np.argmax(y_pred,axis=1))
     sns.heatmap(cm, annot=True, fmt='d')
-    plt.savefig(f'./med{lr}/confusion_matrix.png')
+    # plt.savefig(f'./str(lr)/confusion_matrix.png')
     plt.show()
     
 
@@ -33,14 +36,14 @@ def plot_train_val(train , val,name,lr):
     plt.xlabel('Epoch')
     plt.ylabel(name)
     plt.legend()
-    plt.savefig(f'./med{lr}/{name}.png')
+    # plt.savefig(f'./{lr}/{name}.png')
     plt.show()
 
 def plot_val(val,name,lr):
     plt.plot(val)
     plt.xlabel('Epoch')
     plt.ylabel(name)
-    plt.savefig(f'./med{lr}/{name}.png')
+    # plt.savefig(f'./{lr}/{name}.png')
     plt.show()
 
 
